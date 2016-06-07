@@ -89,7 +89,7 @@ def handle_endpoint(this_choice, this_prev_response):
 
 
 # some basic declarations
-base_url = 'https://apicert.soa-proxy.deere.com/platform'
+base_url = 'https://sandboxapi.deere.com/platform'
 credentials_store_name = 'credentials_store'
 token_store_name = 'token_store'
 
