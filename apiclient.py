@@ -268,8 +268,7 @@ while True:
                                              '</file>'
                 headers = {
                     'Accept': 'application/vnd.deere.axiom.v3+json',
-                    'Content-Type': 'application/vnd.deere.axiom.v3+xml',
-                    'Content-Length': len(body)
+                    'Content-Type': 'application/vnd.deere.axiom.v3+xml'
                 }
                 r = oauth_session.post(org_file_url, headers=headers, data=body)
 
@@ -281,7 +280,7 @@ while True:
                     print 'Data size: ', len(upload_data)
                     headers = {'Accept': 'application/vnd.deere.axiom.v3+json',
                                'Content-Type': 'application/zip',
-                               'Content-Length': len(upload_data)}
+                               'Content-Length': str(len(upload_data))}
                     file_location_url = r.headers.get('location')
                     r = oauth_session.put(file_location_url, headers=headers, data=upload_data)
                     if 200 <= r.status_code < 300:
