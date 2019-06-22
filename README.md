@@ -1,7 +1,7 @@
 # MyJohnDeereAPI-OAuth-Python-Client
 
 ## System Requirments and installation
-1. Download and install Python 2.6.8. 
+1. Download and install Python 2.7.16. 
     For installation follow [this](https://github.com/BurntSushi/nfldb/wiki/Python-&-pip-Windows-installation) instruction.
 
 2. Download Request OAuthlib from https://github.com/requests/requests-oauthlib or run pip install requests requests_oauthlib command

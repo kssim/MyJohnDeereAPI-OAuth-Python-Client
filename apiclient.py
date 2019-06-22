@@ -1,11 +1,13 @@
-# Tested with Python 2.6.8
+# Tested with Python 2.7.16
 # download Request OAuthlib from https://github.com/requests/requests-oauthlib
-from requests_oauthlib.oauth1_session import OAuth1Session
-from datetime import datetime
-import os.path
-import json
-import sys
 
+import sys
+import json
+import os.path
+import requests
+import urlparse
+from requests_oauthlib import OAuth1
+from datetime import datetime
 
 # constants definitions
 DEFAULT_JSON_HEADER = {'Accept': 'application/vnd.deere.axiom.v3+json'}
@@ -21,7 +23,7 @@ def read_store(store_pathname, store_name):
             data = json.load(store)
             store.close()
     else:
-        print store_name[0:1].upper() + store_name[1:] + ' store doesn\'t exist, creating...'
+        print store_name[0:1].upper() + store_name[1:] + ' store doesnt\'t exist, creating...'
         store = open(store_pathname, 'w')
         print 'Created ' + store_name + ' store at "' + os.path.abspath(store.name) + '"'
         store.close()
@@ -62,7 +64,7 @@ def list_files(file_list):
         print 'File list empty.'
 
 
-def handle_endpoint(this_choice, this_prev_response):
+def handle_endpoint(this_choice, this_prev_response, oauth):
     _response = None
     _url = None
     if this_choice[0:1] == '/':
@@ -74,19 +76,64 @@ def handle_endpoint(this_choice, this_prev_response):
             _url = extract_link(this_prev_response, this_choice)
 
     if _url is not None:
-        _response = oauth_session.get(_url, headers=DEFAULT_JSON_HEADER).json()
+        _response = requests.get(_url, headers=DEFAULT_JSON_HEADER, auth=oauth).json()
         if len(_response) > 0:
             # handle file list more easily
             self_url = extract_link(_response, 'self')
             if self_url is not None and 'files' in self_url and _response.get('values') is not None:
                 list_files(_response)
             else:
-                print json.dumps(_response, indent=4, sort_keys=True)
+               print json.dumps(_response, indent=4, sort_keys=True)
         else:
             print 'Response is empty. Nothing to display.'
 
     return _response
 
+def get_oauth_token_and_secret(request_token):
+    parsed_url = urlparse.urlparse(request_token)
+    try:
+        oauth_token = urlparse.parse_qs(parsed_url.query)['oauth_token'][0]
+        oauth_token_secret = urlparse.parse_qs(parsed_url.query)['oauth_token_secret'][0]
+    except KeyError as e:
+        print 'It is not an exact URL.'
+        return ''
+    except Exception as e:
+        print e
+        return ''
+    else:
+        return (oauth_token, oauth_token_secret)
+
+
+def get_oauth_verifier(verified_url):
+    if not verified_url:
+        print 'Verified url is empty'
+        return ''
+
+    parsed_url = urlparse.urlparse(verified_url)
+    try:
+        oauth_verifier = urlparse.parse_qs(parsed_url.query)['oauth_verifier'][0]
+    except KeyError as e:
+        print 'It is not an exact URL.'
+        return ''
+    except Exception as e:
+        print e
+        return ''
+    else:
+        return oauth_verifier
+
+def get_access_token(access_token_url, client_key, client_secret, oauth_token, oauth_token_secret, oauth_verifier):
+    oauth = OAuth1(client_key, client_secret=client_secret, resource_owner_key=oauth_token, resource_owner_secret=oauth_token_secret, verifier=oauth_verifier)
+
+    try:
+        response = requests.get(access_token_url, auth=oauth)
+        print response.text
+        oauth_access_token = urlparse.unquote(response.text.split('&')[0].split('=')[1])
+        oauth_access_token_secret = urlparse.unquote(response.text.split('&')[1].split('=')[1])
+    except Exception as e:
+        print e
+        return ''
+    else:
+        return (oauth_access_token, oauth_access_token_secret)
 
 # some basic declarations
 base_url = 'https://sandboxapi.deere.com/platform'
@@ -96,9 +143,10 @@ token_store_name = 'token_store'
 # 1) oob displays a code instead of redirect, could be useful on mobile device
 # callback_uri = 'oob'
 # 2) customer registered redirect url, could be useful on a mobile device
-# callback_uri = 'janek:helloworld'
+# callback_uri = 'janek:hello world'
 # 3) only interested in token and verifier, so the actual address doesn't really matter
 callback_uri = 'http://127.0.0.1/callback'
+#callback_uri = 'https://developer.deere.com/oauth/auz/grants/provider/authcomplete'
 
 
 # starting main part
@@ -106,7 +154,7 @@ print 'Starting...'
 
 
 # list available credentials
-print
+print ''
 print 'Selecting credentials...'
 credentials = read_store(credentials_store_name, 'credentials')
 if credentials is not None:
@@ -134,7 +182,7 @@ if choice == 'a':
 else:
     chosen_credentials = credentials[int(choice) - 1]
 
-print
+print ''
 print 'Selecting a token...'
 tokens = read_store(token_store_name, 'tokens')
 if tokens is None:
@@ -159,9 +207,11 @@ if choice == 'a':
     print 'Adding a token...'
 
     print 'Step 0: access API catalog (using only client security context)'
-    oauth_session = OAuth1Session(client_key, client_secret=client_secret)
+    oauth = OAuth1(client_key, client_secret=client_secret)
     url = base_url + '/'
-    r = oauth_session.get(url, headers=DEFAULT_JSON_HEADER)
+    r = requests.get(url, headers=DEFAULT_JSON_HEADER, auth=oauth)
+    print '########'
+    print r.json()
     response = r.json()
     print json.dumps(response, indent=4, sort_keys=True)
     request_token_url = extract_link(response, 'oauthRequestToken')
@@ -170,51 +220,60 @@ if choice == 'a':
     access_token_url = extract_link(response, 'oauthAccessToken')
     wait = raw_input('Enter to continue...')
 
-    print
+    print ''
     print 'Step 1: use urls from catalog to fetch a request token (using same client security context)'
-    oauth_session = OAuth1Session(client_key, client_secret=client_secret, callback_uri=callback_uri)
-    r = oauth_session.fetch_request_token(url=request_token_url)
-    print json.dumps(r, indent=4, sort_keys=True)
+    oauth = OAuth1(client_key, client_secret=client_secret, callback_uri=callback_uri)
+    r = requests.get(request_token_url, headers=DEFAULT_JSON_HEADER, auth=oauth)
+    request_token = r.text
+
+    for v in request_token.split('&'):
+        print v
+
     wait = raw_input('Enter to continue...')
 
-    print
+    print ''
     print 'Step 2: follow this link to authorize (this requires action by the user)'
-    authorization_url = authorization_url.replace("oauth_token={token}","")
-    print oauth_session.authorization_url(authorization_url)
+    authorization_url = authorization_url.replace("oauth_token={token}", request_token)
+    (oauth_token, oauth_token_secret) = get_oauth_token_and_secret(authorization_url)
+    print authorization_url
     redirect_url = raw_input('Paste full redirect url: ')
 
-    print
+    print ''
     print 'Step 3: fetch access token'
-    parsed_response = oauth_session.parse_authorization_response(redirect_url)
-    print(json.dumps(parsed_response, indent=4, sort_keys=True))
-    r = oauth_session.fetch_access_token(access_token_url)
+    oauth_verifier = get_oauth_verifier(redirect_url)
+    (access_token, access_token_secret) = get_access_token(access_token_url, client_key, client_secret, oauth_token, oauth_token_secret, oauth_verifier)
+
+    print 'Fetch access token'
+    print 'oauth_token(REQUEST TOKEN) : %s' % oauth_token
+    print 'oauth_verifier(YOUR VERIFIER) : %s' % oauth_verifier
+    print ''
     print 'Access token and secret:'
-    print json.dumps(r, indent=4, sort_keys=True)
-    token = r.get('oauth_token')
-    token_secret = r.get('oauth_token_secret')
+    print 'access_token(ACCESS TOKEN) : %s' % access_token
+    print 'access_token_secret(ACCESS TOKEN SECRET) : %s' % access_token_secret
     wait = raw_input('Enter to continue...')
 
-    r = oauth_session.get(base_url + '/', headers=DEFAULT_JSON_HEADER)
+    oauth = OAuth1(client_key, client_secret=client_secret, resource_owner_key=access_token, resource_owner_secret=access_token_secret, verifier=oauth_verifier)
+    r = requests.get(base_url + '/', headers=DEFAULT_JSON_HEADER, auth=oauth)
     currentUser_url = extract_link(r.json(), 'currentUser')
-    r = oauth_session.get(currentUser_url, headers=DEFAULT_JSON_HEADER)
+    r = requests.get(currentUser_url, headers=DEFAULT_JSON_HEADER, auth=oauth)
     user = r.json().get('accountName')
-    chosen_token = {"user": user, "token": token, "token_secret": token_secret, "timestamp": str(datetime.now())}
+    chosen_token = {"user": user, "token": access_token, "token_secret": access_token_secret, "timestamp": str(datetime.now())}
     tokens[chosen_credentials.get('owner')].append(chosen_token)
     write_store(token_store_name, 'token', tokens)
 
 else:
     chosen_token = owner_tokens[int(choice) - 1]
-    oauth_session = OAuth1Session(client_key, client_secret=client_secret,
+    oauth = OAuth1(client_key, client_secret=client_secret,
                                   resource_owner_key=chosen_token.get('token'),
                                   resource_owner_secret=chosen_token.get('token_secret'))
 
-print
-r = oauth_session.get(base_url + '/', headers=DEFAULT_JSON_HEADER)
+print ''
+r = requests.get(base_url + '/', headers=DEFAULT_JSON_HEADER, auth=oauth)
 prev_response = r.json()
 print json.dumps(prev_response, indent=4, sort_keys=True)
 while True:
-    print
-    print
+    print ''
+    print ''
     print 'u : upload a file'
     print 'd : download a file'
     print 'r : remove a file'
@@ -228,13 +287,14 @@ while True:
             break
 
         elif choice == 'u':
+            print 'File will be uploaded to your Organization'
             local_path = raw_input('Local path?: ')
             mjd_name = raw_input('Name for upload?: ')
 
             # find right organization to upload the file to
-            organizations_url = extract_link(oauth_session.get(base_url + '/',
-                                                               headers=DEFAULT_JSON_HEADER).json(), 'organizations')
-            organizations = oauth_session.get(organizations_url, headers=DEFAULT_JSON_HEADER).json().get('values')
+            organizations_url = extract_link(requests.get(base_url + '/',
+                                                               headers=DEFAULT_JSON_HEADER, auth=oauth).json(), 'organizations')
+            organizations = requests.get(organizations_url, headers=DEFAULT_JSON_HEADER, auth=oauth).json().get('values')
             member_organizations = []
             if organizations is not None:
                 for organization in organizations:
@@ -246,7 +306,7 @@ while True:
             org_file_url = None
             if len(member_organizations) == 0:
                 print 'It appears that \'' + chosen_token.get('user') + \
-                      '\' doesn\'t have an account on MyJohnDeere, no (member) organizations found. ' \
+                      '\' doesnt\' have an account on MyJohnDeere, no (member) organizations found. ' \
                       'Not able to upload any files.'
             else:
                 if len(member_organizations) > 1:
@@ -270,7 +330,7 @@ while True:
                     'Accept': 'application/vnd.deere.axiom.v3+json',
                     'Content-Type': 'application/vnd.deere.axiom.v3+xml'
                 }
-                r = oauth_session.post(org_file_url, headers=headers, data=body)
+                r = requests.post(org_file_url, headers=headers, data=body, auth=oauth)
 
                 if r.status_code == 201:
                     # create file content
@@ -282,9 +342,10 @@ while True:
                                'Content-Type': 'application/zip',
                                'Content-Length': str(len(upload_data))}
                     file_location_url = r.headers.get('location')
-                    r = oauth_session.put(file_location_url, headers=headers, data=upload_data)
+                    r = requests.put(file_location_url, headers=headers, data=upload_data, auth=oauth)
                     if 200 <= r.status_code < 300:
                         print 'File \'' + local_path + '\' successfully uploaded to \'' + mjd_name + '\'.'
+                        print 'The file is uploaded to ' + organization.get('name') + 'organization'
                     else:
                         print 'Not able to upload file content for \'' + mjd_name + '\'.'
                 else:
@@ -294,9 +355,9 @@ while True:
         elif choice == 'r':
             file_id = raw_input('File ID?: ')
             file_url = base_url + '/files/' + file_id
-            r = oauth_session.get(file_url, headers=DEFAULT_JSON_HEADER)
+            r = requests.get(file_url, headers=DEFAULT_JSON_HEADER, auth=oauth)
             file_name = r.json().get('name')
-            r = oauth_session.delete(file_url, headers=DEFAULT_JSON_HEADER)
+            r = requests.delete(file_url, headers=DEFAULT_JSON_HEADER, auth=oauth)
             if 200 <= r.status_code < 300:
                 print 'File \'' + file_name + '\' (' + file_id + ') successfully deleted.'
             else:
@@ -307,7 +368,7 @@ while True:
             file_id = raw_input('File ID?: ')
             local_path = raw_input('Local path?: ')
             headers = {'Accept': 'application/zip'}
-            r = oauth_session.get(base_url + '/files/' + file_id, headers=headers, stream=True)
+            r = requests.get(base_url + '/files/' + file_id, headers=headers, stream=True, auth=oauth)
             with open(local_path, 'wb') as fd:
                 for chunk in r.iter_content():
                     fd.write(chunk)
@@ -321,6 +382,6 @@ while True:
         print '>>> !!! Error occurred, try again !!! <<<'
         print sys.exc_info()
 
-print
+print ''
 print 'Finished.'
-print
+print ''
